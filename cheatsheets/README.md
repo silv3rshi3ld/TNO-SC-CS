@@ -31,8 +31,9 @@ Navigate through the specialized cheatsheets below for detailed techniques and t
 4.  **[Alert Evasion Cheatsheet](Alert-Evasion-Cheatsheet.md)**: Core strategies for minimizing detection.
 5.  **[Command Obfuscation Cheatsheet](Command-Obfuscation-Cheatsheet.md)**: Hiding your commands and activities.
 6.  **[Lateral Movement Cheatsheet](Lateral-Movement-Cheatsheet.md)**: Moving through the network undetected.
-7.  **[Scoring System & Optimization Cheatsheet](Scoring-System-Cheatsheet.md)**: Understanding and optimizing your score.
-8.  **[Incident Response Evasion Cheatsheet](Incident-Response-Evasion-Cheatsheet.md)**: Techniques to evade incident response activities.
+7.  **[Data Exfiltration Cheatsheet](Data-Exfiltration-Cheatsheet.md)**: Securely transferring data off the target network.
+8.  **[Scoring System & Optimization Cheatsheet](Scoring-System-Cheatsheet.md)**: Understanding and optimizing your score.
+9.  **[Incident Response Evasion Cheatsheet](Incident-Response-Evasion-Cheatsheet.md)**: Techniques to evade incident response activities.
 
 ## Infrastructure Overview
 
@@ -75,11 +76,11 @@ graph TD
     IR --> O{Execute Action};
     O --> P[Monitor Alerts];
     P --> Q{Objective Met?};
-    Q -- Yes --> R[Document for Write-up];
+    Q -- Yes --> DE[Consult Data Exfiltration Cheatsheet];
     Q -- No --> B;
+    DE --> R[Document for Write-up];
     R --> S[End];
 ```
-
 ## Attack Phases and Cheatsheet Mapping
 
 | Attack Phase | Primary Cheatsheets | Secondary Cheatsheets |
@@ -87,7 +88,9 @@ graph TD
 | Initial Access | Reconnaissance | Alert Evasion, Command Obfuscation |
 | Privilege Escalation | AD Attack, OT/SCADA | Command Obfuscation, Scoring System |
 | Lateral Movement | Lateral Movement | Alert Evasion, IR Evasion |
-| Objective Execution | AD Attack, OT/SCADA | Scoring System, IR Evasion |
+| Objective Execution | AD Attack, OT/SCADA | Scoring System, IR Evasion, Data Exfiltration |
+| Persistence | Lateral Movement | IR Evasion, Command Obfuscation |
+| Data Collection & Exfiltration | Data Exfiltration | Alert Evasion, Scoring System |
 | Persistence | Lateral Movement | IR Evasion, Command Obfuscation |
 
 ## Key Rules Reminders
